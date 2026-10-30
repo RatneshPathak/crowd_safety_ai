@@ -154,10 +154,10 @@ class CrowdSafetyDashboard:
         risk_percentage = (self.high_risk_frames / max(self.total_frames, 1)) * 100
         
         stats = [
-            ('Uptime:', f'{int(uptime//60)}m {int(uptime%60)}s', (100, 200, 255)),
+            ('Elapsed:', f'{int(uptime//60)}m {int(uptime%60)}s', (100, 200, 255)),
             ('Frames:', f'{self.total_frames}', (100, 255, 100)),
             ('Avg FPS:', f'{avg_fps:.1f}', (255, 200, 100)),
-            ('Risk:', f'{risk_percentage:.1f}%', (255, 100, 100)),
+            ('High-risk:', f'{risk_percentage:.1f}%', (255, 100, 100)),
         ]
         
         y_pos = 62
@@ -202,36 +202,28 @@ class CrowdSafetyDashboard:
         return panel
     
     def create_heatmap_legend(self, width=280, height=140):
-        """Create a heatmap color legend"""
+        """Risk-index band legend (kept under the old name for compatibility).
+
+        The pipeline does not draw a density heat-map, so the former
+        decorative JET gradient was replaced with the real risk bands.
+        """
         panel = np.zeros((height, width, 3), dtype=np.uint8)
         panel[:] = (26, 26, 26)
-        
-        # Title with background
         cv2.rectangle(panel, (0, 0), (width, 35), (40, 40, 40), -1)
-        cv2.putText(panel, 'DENSITY SCALE', (15, 24),
+        cv2.putText(panel, 'RISK INDEX BANDS', (15, 24),
                    cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 255, 100), 2)
-        
-        # Color gradient
-        gradient = np.zeros((65, 240, 3), dtype=np.uint8)
-        for i in range(240):
-            value = int((i / 240) * 255)
-            color = cv2.applyColorMap(np.array([[value]], dtype=np.uint8), 
-                                     cv2.COLORMAP_JET)[0][0]
-            gradient[:, i] = color
-            
-        panel[48:113, 20:260] = gradient
-        
-        # Labels
-        cv2.putText(panel, 'Low', (20, 130), cv2.FONT_HERSHEY_SIMPLEX, 
-                   0.45, (255, 255, 255), 1)
-        cv2.putText(panel, 'Medium', (110, 130), cv2.FONT_HERSHEY_SIMPLEX, 
-                   0.45, (255, 255, 255), 1)
-        cv2.putText(panel, 'High', (220, 130), cv2.FONT_HERSHEY_SIMPLEX, 
-                   0.45, (255, 255, 255), 1)
-        
+        bar_x0, bar_x1 = 20, 260
+        split1 = bar_x0 + int((bar_x1 - bar_x0) * 0.5)
+        split2 = bar_x0 + int((bar_x1 - bar_x0) * 0.7)
+        panel[55:100, bar_x0:split1] = (80, 180, 60)
+        panel[55:100, split1:split2] = (0, 170, 255)
+        panel[55:100, split2:bar_x1] = (60, 60, 230)
+        for label, x in (('0', bar_x0), ('0.5', split1 - 8), ('0.7', split2 - 8), ('1', bar_x1 - 8)):
+            cv2.putText(panel, label, (x, 125), cv2.FONT_HERSHEY_SIMPLEX,
+                       0.45, (255, 255, 255), 1)
         return panel
-    
-    def render_dashboard(self, main_frame, model_accuracy=92.5):
+
+    def render_dashboard(self, main_frame, model_accuracy=None):
         """Render complete dashboard with main video frame"""
         # Get current metrics
         current_density = self.density_history[-1] if self.density_history else 0
@@ -241,14 +233,14 @@ class CrowdSafetyDashboard:
         
         # Create dashboard components with improved sizes
         density_chart = self.create_line_chart(self.density_history, 
-            'Crowd Density Trend', '#00ffff', 'Density', width=450, height=220)
+            'Density Proxy Trend', '#00ffff', 'Density', width=450, height=220)
         risk_chart = self.create_line_chart(self.risk_history,
             'Risk Level Trend', '#ff4444', 'Risk', width=450, height=220)
         motion_chart = self.create_line_chart(self.motion_history,
             'Motion Activity', '#44ff44', 'Motion', width=450, height=220)
         
         risk_gauge = self.create_gauge(current_risk, 'RISK LEVEL', width=280, height=200)
-        density_gauge = self.create_gauge(current_density, 'DENSITY', width=280, height=200)
+        density_gauge = self.create_gauge(current_density, 'DENSITY PROXY', width=280, height=200)
         
         stat_panel = self.create_stat_panel(width=420, height=140)
         alert_panel = self.create_alert_panel(width=520, height=140)

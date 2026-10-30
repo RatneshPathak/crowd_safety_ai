@@ -1,0 +1,18 @@
+__pycache__/
+*.py[cod]
+venv/
+.venv/
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# generated runs and large media (GitHub rejects files over 100 MB)
+data/outputs/*
+!data/outputs/.gitkeep
+data/videos/*
+!data/videos/.gitkeep
+*.mp4
+
+# source documents
+*.docx

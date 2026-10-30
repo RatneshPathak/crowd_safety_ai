@@ -41,7 +41,39 @@ class EnhancedCrowdSafetySystem:
         self.density_history = []
         self.risk_history = []
         self.motion_history = []
-        
+
+        # Full-length, per-frame records (the *_history lists above are
+        # trimmed to the last 150 frames for the rolling in-video charts).
+        self.records = []
+        # Structured events: consecutive frames in the same state are merged
+        # into one episode with a start/end frame and a peak value.
+        self.events = []
+        self._open_events = {}
+        self.video_info = {}
+
+    def _track_event(self, key, active, frame_num, t_sec, category, severity,
+                     message, value):
+        """Open, extend or close an event episode (frame-accurate)."""
+        ev = self._open_events.get(key)
+        if active:
+            if ev is None:
+                ev = {
+                    'category': category, 'severity': severity,
+                    'message': message,
+                    'start_frame': frame_num, 'end_frame': frame_num,
+                    'start_sec': round(t_sec, 3), 'end_sec': round(t_sec, 3),
+                    'peak_value': float(value), 'frames': 1,
+                }
+                self._open_events[key] = ev
+                self.events.append(ev)
+            else:
+                ev['end_frame'] = frame_num
+                ev['end_sec'] = round(t_sec, 3)
+                ev['frames'] += 1
+                ev['peak_value'] = max(ev['peak_value'], float(value))
+        elif ev is not None:
+            del self._open_events[key]
+
     def calculate_fps(self):
         """Calculate current FPS"""
         current_time = time.time()
@@ -123,8 +155,19 @@ class EnhancedCrowdSafetySystem:
         adjustment = (density * 0.3 + min(motion / 20.0, 1.0) * 0.2)
         return min(base + adjustment, 1.0)
     
-    def process_video(self, video_path, output_path=None, display=True):
-        """Process video with enhanced dashboard visualization"""
+    def process_video(self, video_path, output_path=None, display=True,
+                      max_frames=None, progress_callback=None,
+                      should_cancel=None):
+        """Process video with enhanced dashboard visualization.
+
+        Optional arguments (all backwards compatible):
+          max_frames        stop after this many processed frames.
+          progress_callback callable(frame_num, total_frames, info_dict)
+                            called after every frame with real progress.
+          should_cancel     callable() -> bool, checked once per frame.
+
+        Returns a summary dict, or None if the video could not be opened.
+        """
         # Load video - initialize VideoLoader with path and optimized settings
         try:
             # Use higher resolution and no frame skip for smoother playback
@@ -136,10 +179,21 @@ class EnhancedCrowdSafetySystem:
         
         # Get video properties from the VideoLoader's cap
         cap = video_loader.cap
-        fps_original = int(cap.get(cv2.CAP_PROP_FPS))
+        fps_original = int(round(cap.get(cv2.CAP_PROP_FPS) or 0))
+        if fps_original <= 0 or fps_original > 240:
+            fps_original = 25  # container did not report a usable FPS
         frame_width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
         frame_height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
         total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+        if total_frames < 0:
+            total_frames = 0
+        planned_frames = min(total_frames, max_frames) if (
+            max_frames and total_frames) else (max_frames or total_frames)
+        self.video_info = {
+            'width': frame_width, 'height': frame_height,
+            'fps': fps_original, 'total_frames': total_frames,
+            'duration_sec': (total_frames / fps_original) if total_frames else 0.0,
+        }
         
         print(f"Processing video: {video_path}")
         print(f"Resolution: {frame_width}x{frame_height}")
@@ -148,17 +202,30 @@ class EnhancedCrowdSafetySystem:
         print("-" * 50)
         
         # Setup video writer if output path provided
+        out = None
         if output_path:
             fourcc = cv2.VideoWriter_fourcc(*'mp4v')
             # Dashboard output is 1920x1080
             out = cv2.VideoWriter(output_path, fourcc, fps_original, (1920, 1080))
-        
+            if not out.isOpened():
+                print(f"Error: could not open video writer for {output_path}")
+                out = None
+
         frame_num = 0
         prev_gray = None
-        model_accuracy = 92.5  # Mock accuracy for visualization
+        cancelled = False
+        started = time.time()
+        # NOTE: the previous hard-coded `model_accuracy = 92.5` placeholder
+        # was removed. No accuracy is measured by this pipeline.
+        model_accuracy = None
         
         try:
             while True:
+                if should_cancel is not None and should_cancel():
+                    cancelled = True
+                    break
+                if max_frames and frame_num >= max_frames:
+                    break
                 # Use VideoLoader's read method
                 ret, frame = video_loader.read()
                 if not ret:
@@ -196,6 +263,35 @@ class EnhancedCrowdSafetySystem:
                 self.density_history.append(density_value)
                 self.risk_history.append(risk_normalized)
                 self.motion_history.append(motion_magnitude)
+
+                t_sec = frame_num / fps_original
+                self.records.append({
+                    'frame': frame_num,
+                    't_sec': round(t_sec, 4),
+                    'density': float(density_value),
+                    'motion': float(motion_magnitude),
+                    'risk_raw': float(risk_score),
+                    'risk': float(risk_normalized),
+                    'risk_label': risk_str,
+                    'anomaly_score': float(anomaly_score),
+                    'anomaly': bool(anomaly_detected),
+                })
+                self._track_event('risk_high', risk_normalized > 0.7,
+                                  frame_num, t_sec, 'High risk index', 'high',
+                                  'Risk index above 0.70', risk_normalized)
+                self._track_event('anomaly', bool(anomaly_detected),
+                                  frame_num, t_sec, 'Statistical anomaly',
+                                  'medium',
+                                  'Deviation from running mean above 0.70',
+                                  anomaly_score)
+                self._track_event('motion_high', motion_magnitude > 15.0,
+                                  frame_num, t_sec, 'High motion', 'medium',
+                                  'Mean optical-flow magnitude above 15 px/frame',
+                                  motion_magnitude)
+                self._track_event('density_high', density_value > 0.8,
+                                  frame_num, t_sec, 'High density proxy',
+                                  'high', 'Density proxy above 0.80',
+                                  density_value)
                 
                 # Keep history length manageable
                 if len(self.density_history) > 150:
@@ -232,7 +328,8 @@ class EnhancedCrowdSafetySystem:
                     current_fps,
                     self.density_history,
                     self.risk_history,
-                    model_accuracy
+                    model_accuracy,
+                    anomaly_score=anomaly_score,
                 )
                 
                 # Render complete dashboard with visualization
@@ -253,11 +350,20 @@ class EnhancedCrowdSafetySystem:
                         key = cv2.waitKey(1) & 0xFF
                 
                 # Write to output
-                if output_path:
+                if out is not None:
                     out.write(dashboard_frame)
                 
+                if progress_callback is not None:
+                    progress_callback(frame_num, planned_frames, {
+                        'density': float(density_value),
+                        'motion': float(motion_magnitude),
+                        'risk': float(risk_normalized),
+                        'risk_label': risk_str,
+                        'anomaly_score': float(anomaly_score),
+                    })
+
                 # Progress indicator
-                if frame_num % 30 == 0:
+                if frame_num % 30 == 0 and total_frames:
                     progress = (frame_num / total_frames) * 100
                     print(f"Progress: {progress:.1f}% | "
                           f"FPS: {current_fps:.1f} | "
@@ -269,9 +375,10 @@ class EnhancedCrowdSafetySystem:
         finally:
             # Cleanup
             video_loader.release()
-            if output_path:
+            if out is not None:
                 out.release()
-            cv2.destroyAllWindows()
+            if display:
+                cv2.destroyAllWindows()
             
             print("\n" + "=" * 50)
             print("PROCESSING COMPLETE")
@@ -280,6 +387,17 @@ class EnhancedCrowdSafetySystem:
             print(f"High risk frames: {self.dashboard.high_risk_frames}")
             print(f"Anomalies detected: {self.dashboard.anomaly_count}")
             print("=" * 50)
+
+        self.summary = {
+            'frames_processed': frame_num,
+            'cancelled': cancelled,
+            'elapsed_sec': round(time.time() - started, 3),
+            'high_risk_frames': int(self.dashboard.high_risk_frames),
+            'anomaly_frames': int(self.dashboard.anomaly_count),
+            'video': dict(self.video_info),
+            'output_written': out is not None,
+        }
+        return self.summary
 
 
 def main():

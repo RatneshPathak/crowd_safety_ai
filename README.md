@@ -1,107 +1,43 @@
-🚨 Crowd Safety AI
-Real-time Crowd Risk Detection System - Problem Statement 1 ⭐
-Live Risk Analysis Overlay - Hackathon Ready!
+# Crowd Safety AI — Safety Operations Center
 
-🎯 Team Information
-🏆 Team Lead: Ratnesh Pathak
-MSc IT Final Year | Thakur College of Science & Commerce, Mumbai
-📧 pathakratnesh03@gmail.com | 📱 +91 8793614505 | Portfolio
+Hackathon Problem Statement 1. Team lead: **Ratnesh Pathak** (MSc IT, Thakur College of Science & Commerce) ·
+Raunak Gupta (anomaly detection) · Ayush Jha (density + motion) · Ritesh Mishra (visualization).
 
-🚀 Team Members:
+An OpenCV pipeline scores every frame of a crowd video, and a Streamlit "operations center" presents the
+result: annotated dashboard video with a scrubbable event timeline, linked analytics charts, and an event log.
 
-Name	Role
-Raunak Gupta	ML Engineer (Anomaly Detection)
-Ayush Jha	Computer Vision (Density + Motion)
-Ritesh Mishra	Visualization & UI Overlays
-🔬 What We Built
-Crowd Safety AI processes live video streams to detect crowd density anomalies, abnormal motion patterns, and classify risk levels in real-time:
-
-text
-LOW (0.0-0.3) → Normal crowd movement
-MEDIUM (0.3-0.7) → Elevated density/speed  
-HIGH (0.7-1.0) → ⚠️ Emergency risk detected
-Live Demo Output: Risk: LOW | Score: 0.24 overlay on video feed 
-​
-
-🛠️ Tech Stack
-bash
-Python 3.11.8 | OpenCV 4.12.0 | NumPy 2.2.6 | scikit-learn 1.8.0
-Module	Purpose	Algorithm
-video_loader.py	Live frame extraction	OpenCV VideoCapture
-preprocessing.py	Noise reduction	Gaussian Blur
-density_estimation.py	Grid heatmaps	8x12 pixel analysis
-motion_analysis.py	Flow detection	Farneback Optical Flow
-anomaly_detection.py	Outlier scoring	Statistical deviation
-risk_classifier.py	Risk levels	Threshold-based
-visualizer.py	Live overlays	OpenCV drawing
-🚀 60-Second Setup
-bash
-# Clone project
-git clone <your-repo>
-cd crowd_safety_ai
-
-# Install
+## Run (Windows PowerShell)
+```powershell
+cd path\to\crowd_safety_ai
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
 pip install -r requirements.txt
+streamlit run app.py
+```
+Optional: put a demo clip at `data\videos\merged_crowd_demo.mp4` to enable the "Explore the demo video" button.
+Original desktop mode still works: `python src\main.py`. A synthetic test clip: `python tests\make_test_video.py`.
 
-# LIVE WEBCAM DEMO (no video file needed!)
-python src/main.py
-Output: Live risk analysis with Risk: LOW/MEDIUM/HIGH overlays 🎥
+## What each number really is
+| Signal | Computation | Limitation |
+|---|---|---|
+| Density proxy | mean of blurred, min-max-normalised grayscale, 10×10 grid, 0–1 | **Brightness, not people.** Not a head-count |
+| Motion | mean Farneback optical-flow magnitude, px/frame at 960×540 | includes camera shake / flicker |
+| Risk index | 0.6·density + 0.4·min(motion/20,1) → class (0.40/0.70) → 0–1 index | heuristic, **not a probability** |
+| Anomaly score | deviation from running mean of motion & density, flag > 0.70 | not a learned model; sustained shifts keep flagging |
 
-📊 Pipeline Architecture
-text
-📹 Live Webcam/Video → Preprocessing → Density Grid (8x12) 
-  ↓
-💨 Motion Analysis → Anomaly Detection → Risk Score (0.0-1.0)
-  ↓
-🖥️ Visual Overlays → "Risk: LOW | Score: 0.24"
-Modular Design: 8 independent, testable modules ✅
+No trained model, no measured accuracy. It does not count or identify people or detect specific incidents.
 
-⚙️ Configuration (config.py)
-python
-# Risk Thresholds - TUNE FOR YOUR ENVIRONMENT
-DENSITY_LOW, DENSITY_HIGH = 0.3, 0.7
-MOTION_HIGH = 5.0  # pixels/frame
-ANOMALY_THRESHOLD = 0.8
+## Features
+Real per-frame progress and cancel · every run saved in its own `data/outputs/run_*` folder (never overwritten) ·
+H.264 re-encode for browser playback (via `imageio-ffmpeg`) · file validation with readable errors ·
+per-frame CSV and events JSON export · reduced-motion and keyboard support.
 
-# Video Settings
-FRAME_SKIP = 3
-TARGET_SIZE = (640, 480)
-🎖️ Hackathon Advantages
-✅ Live Processing - No pre-recorded videos
+## Layout
+`app.py` entry · `src/` original CV pipeline · `services/analysis.py` background runner · `ui/` theme, components, charts ·
+`tests/` synthetic clip + service tests.
 
-✅ Privacy Safe - Density-based (no faces detected)
-
-✅ Judge Friendly - Clear Risk: LOW | Score: X.XX overlays
-
-✅ Modular - Easy to explain each component
-
-✅ Scalable - Works on any camera feed
-
-✅ Production Ready - Proper error handling
-
-🏆 Ratnesh Pathak - Team Lead
-MSc IT Final Year | Thakur College of Science & Commerce
-Awards: Best Academic Student 2024 | Best Library Member 2024
-Experience: 4+ years Cultural Committee leadership, Farewell 2025 Core Head
-Internships: Business Dev, Data Science, Web Development
-Skills: Python, OpenCV, ML, Flask/Django, Data Analysis
-
-📱 +91 8793614505 | ✉️ pathakratnesh03@gmail.com
-
-🔮 Future Roadmap
-text
-[ ] Multi-camera support
-[ ] Real-time alerts (SMS/Email)
-[ ] Cloud deployment (AWS)
-[ ] Mobile app dashboard
-[ ] Historical analytics
-📸 Live Demo Screenshot
-​
-
-"This is normal crowd" → Safety confirmed ✅
-
-bash
-# ONE COMMAND HACKATHON DEMO
-python src/main.py
-Built with ❤️ by Team Ratnesh Pathak
-MSc IT, Thakur College | Problem Statement 1
+## Changes to original files (`src/`)
+- `main.py`: optional `max_frames`, `progress_callback`, `should_cancel`; returns a summary; keeps full per-frame `records` and merged `events`; fixes zero-FPS/zero-frame-count crashes; the mock `model_accuracy = 92.5` removed.
+- `visualizer.py`: removed the fake accuracy box and the `random()` anomaly value (now the real score); removed hard-coded "Mumbai Train Analysis" label and emoji that rendered as `??`.
+- `dashboard.py`: relabelled "density" as proxy; replaced the decorative JET legend (no heat-map is drawn) with the real risk bands.
+- README previously listed a phone number and wrong thresholds/grid; both corrected/removed.
